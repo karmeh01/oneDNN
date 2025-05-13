@@ -31,8 +31,12 @@ namespace dnnl {
 namespace impl {
 namespace cpu {
 namespace aarch64 {
+template <cpu_isa_t isa>
 struct jit_brdgmm_kernel_base_t : public jit_generator {
-    jit_brdgmm_kernel_base_t(const brgemm_t &abrd);
+    jit_brdgmm_kernel_base_t(const brgemm_t &abrd)
+        : jit_generator(nullptr, MAX_CODE_SIZE, true, isa)
+        , brg(abrd)
+        , simd_w_(cpu_isa_traits<isa>::vlen / brg.typesize_C) {}
 
     DECLARE_CPU_JIT_AUX_FUNCTIONS(jit_brdgmm_kernel_base_t)
 
@@ -43,7 +47,7 @@ struct jit_brdgmm_kernel_base_t : public jit_generator {
     }
 
 private:
-    using po_injector_t = injector::jit_uni_postops_injector_t<sve_512>;
+    using po_injector_t = injector::jit_uni_postops_injector_t<isa>;
     std::unique_ptr<po_injector_t> postops_injector_;
 
     Xbyak_aarch64::Label permute_index_table;

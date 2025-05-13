@@ -38,10 +38,11 @@ namespace aarch64 {
 
 using namespace dnnl::impl::utils;
 
-jit_brdgmm_kernel_base_t::jit_brdgmm_kernel_base_t(const brgemm_t &abrd)
-    : jit_generator(nullptr, MAX_CODE_SIZE, true, sve_512)
+template <cpu_isa_t isa>
+jit_brdgmm_kernel_base_t<isa>::jit_brdgmm_kernel_base_t(const brgemm_t &abrd)
+    : jit_generator(nullptr, MAX_CODE_SIZE, true, isa)
     , brg(abrd)
-    , simd_w_(cpu_isa_traits<sve_512>::vlen / brg.typesize_C) {
+    , simd_w_(cpu_isa_traits<isa>::vlen / brg.typesize_C) {
 
     if (brg.with_eltwise || brg.with_binary || brg.with_sum) {
         static constexpr bool preserve_gpr = true;
@@ -71,7 +72,8 @@ jit_brdgmm_kernel_base_t::jit_brdgmm_kernel_base_t(const brgemm_t &abrd)
     }
 }
 
-void jit_brdgmm_kernel_base_t::read_params() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::read_params() {
     Label label_done;
 
     add_imm(X_DEFAULT_ADDR, param1, GET_OFF(BS), X_TMP_0);
@@ -136,7 +138,8 @@ void jit_brdgmm_kernel_base_t::read_params() {
     }
 }
 
-void jit_brdgmm_kernel_base_t::load_accumulators(int m_blocks, int n_blocks) {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::load_accumulators(int m_blocks, int n_blocks) {
     const int v_substep = vnni_substep();
     for_(int v = 0; v < v_substep; ++v)
     for_(int m = 0; m < m_blocks; ++m)
@@ -146,7 +149,8 @@ void jit_brdgmm_kernel_base_t::load_accumulators(int m_blocks, int n_blocks) {
     }
 }
 
-void jit_brdgmm_kernel_base_t::restore_A_B_matrices() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::restore_A_B_matrices() {
     if (brg.brgattr.max_bs > 1
             && (one_of(brg.type, brgemm_addr, brgemm_offs) || has_vpad())) {
         add_imm(X_DEFAULT_ADDR, X_SP, reg_batch0_addr_offs_, X_TMP_0);
@@ -161,7 +165,8 @@ void jit_brdgmm_kernel_base_t::restore_A_B_matrices() {
     }
 }
 
-void jit_brdgmm_kernel_base_t::set_A_B_matrices() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::set_A_B_matrices() {
 
     if (brg.type == brgemm_addr) {
         add_imm(X_DEFAULT_ADDR, reg_aux_batch_addr,
@@ -196,14 +201,16 @@ void jit_brdgmm_kernel_base_t::set_A_B_matrices() {
     add(reg_aux_B, reg_aux_B, X_TMP_1);
 }
 
-void jit_brdgmm_kernel_base_t::advance_A_B_matrices() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::advance_A_B_matrices() {
     if (brg.brgattr.max_bs > 1
             && (one_of(brg.type, brgemm_addr, brgemm_offs) || has_vpad()))
         add_imm(reg_aux_batch_addr, reg_aux_batch_addr,
                 sizeof(brgemm_batch_element_t), X_TMP_0);
 }
 
-void jit_brdgmm_kernel_base_t::cvt2ps(data_type_t type_in, const ZReg vmm_in,
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::cvt2ps(data_type_t type_in, const ZReg vmm_in,
         const AdrNoOfs &op, bool mask_flag, bool store) {
     switch (type_in) {
         case data_type::f32:
@@ -227,7 +234,8 @@ void jit_brdgmm_kernel_base_t::cvt2ps(data_type_t type_in, const ZReg vmm_in,
     }
 }
 
-void jit_brdgmm_kernel_base_t::apply_post_ops(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::apply_post_ops(
         int m_blocks, int n_blocks, bool has_n_tail) {
 
     binary_injector::rhs_arg_dynamic_params_t rhs_arg_params;
@@ -322,7 +330,8 @@ void jit_brdgmm_kernel_base_t::apply_post_ops(
     postops_injector_->compute_vector_range(vmm_idxs_param, rhs_arg_params);
 }
 
-void jit_brdgmm_kernel_base_t::store_accumulators_apply_post_ops(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::store_accumulators_apply_post_ops(
         int m_blocks, int n_blocks, bool has_n_tail) {
 
     const bool dq2ps_required = brg.is_int8;
@@ -464,7 +473,8 @@ void jit_brdgmm_kernel_base_t::store_accumulators_apply_post_ops(
     }
 }
 
-void jit_brdgmm_kernel_base_t::store_accumulators_without_post_ops(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::store_accumulators_without_post_ops(
         int m_blocks, int n_blocks, bool has_n_tail) {
 
     const bool dt_requires_saturation
@@ -493,14 +503,16 @@ void jit_brdgmm_kernel_base_t::store_accumulators_without_post_ops(
     }
 }
 
-void jit_brdgmm_kernel_base_t::maybe_transpose_interleaved_vnni_to_plain(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::maybe_transpose_interleaved_vnni_to_plain(
         int m_blocks, int n_blocks, bool has_n_tail) {
 
     if (vnni_substep() == 1) return;
     assert(!"unsupported\n");
 }
 
-void jit_brdgmm_kernel_base_t::store_accumulators(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::store_accumulators(
         int m_blocks, int n_blocks, bool has_n_tail) {
 
     maybe_transpose_interleaved_vnni_to_plain(m_blocks, n_blocks, has_n_tail);
@@ -519,7 +531,8 @@ void jit_brdgmm_kernel_base_t::store_accumulators(
     }
 }
 
-void jit_brdgmm_kernel_base_t::load_a(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::load_a(
         ZReg vmma, int m_i, int n_i, int v_i, bool has_n_tail) {
     const int n_blocks
             = has_n_tail && n_block2_tail() > 0 ? n_block2_tail() : n_block2();
@@ -542,7 +555,8 @@ void jit_brdgmm_kernel_base_t::load_a(
     }
 }
 
-void jit_brdgmm_kernel_base_t::load_b(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::load_b(
         ZReg vmmb, int n_i, int v_i, bool has_n_tail) {
     // for B matrix we assume memory is padded and it is safe to load simd
     // elements.
@@ -562,7 +576,8 @@ void jit_brdgmm_kernel_base_t::load_b(
     }
 }
 
-void jit_brdgmm_kernel_base_t::brdgmm_microkernel(int m_blocks, int n_blocks,
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::brdgmm_microkernel(int m_blocks, int n_blocks,
         bool has_top_padding, bool has_bottom_padding, bool has_tail) {
 
     const bool has_padding = has_top_padding || has_bottom_padding;
@@ -671,7 +686,8 @@ void jit_brdgmm_kernel_base_t::brdgmm_microkernel(int m_blocks, int n_blocks,
     }
 }
 
-void jit_brdgmm_kernel_base_t::batch_loop(
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::batch_loop(
         const int m_blocks, const int n_blocks, bool has_n_tail) {
 
     auto get_padding_info = [&]() {
@@ -767,7 +783,8 @@ void jit_brdgmm_kernel_base_t::batch_loop(
     store_accumulators(m_blocks, n_blocks, has_n_tail);
 }
 
-void jit_brdgmm_kernel_base_t::compute_loop() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::compute_loop() {
 
     const bool has_m_block2_tail = m_block2_tail() > 0;
     const int loop_m = (nb_m_block2() - has_m_block2_tail);
@@ -870,7 +887,8 @@ void jit_brdgmm_kernel_base_t::compute_loop() {
     m_loop();
 }
 
-void jit_brdgmm_kernel_base_t::init_masks() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::init_masks() {
     if (is_fast_vnni_int8()) { assert(!"unsupported\n"); }
 
     if (n_block1_tail() != 0) {
@@ -890,7 +908,8 @@ void jit_brdgmm_kernel_base_t::init_masks() {
     }
 }
 
-void jit_brdgmm_kernel_base_t::generate() {
+template <cpu_isa_t isa>
+void jit_brdgmm_kernel_base_t<isa>::generate() {
 
     preamble();
     sub_imm(X_SP, X_SP, stack_space_needed_, X_TMP_0); //rsp=X_SP
@@ -910,23 +929,28 @@ void jit_brdgmm_kernel_base_t::generate() {
     if (is_fast_vnni_int8()) { assert(!"unsupported\n"); }
 }
 
-brdgmm_kernel_t::brdgmm_kernel_t(const brgemm_t abrd) {
-    brgemm_kernel_ = new jit_brdgmm_kernel_base_t(abrd);
+template <cpu_isa_t isa>
+brdgmm_kernel_t<isa>::brdgmm_kernel_t(const brgemm_t abrd) {
+    brgemm_kernel_ = new jit_brdgmm_kernel_base_t<isa>(abrd);
 }
 
-status_t brdgmm_kernel_t::create_kernel() {
+template <cpu_isa_t isa>
+status_t brdgmm_kernel_t<isa>::create_kernel() {
     return brgemm_kernel_->create_kernel();
 }
 
-void brdgmm_kernel_t::operator()(brgemm_kernel_params_t *params) const {
+template <cpu_isa_t isa>
+void brdgmm_kernel_t<isa>::operator()(brgemm_kernel_params_t *params) const {
     (*brgemm_kernel_)(params);
 }
 
-const jit_generator *brdgmm_kernel_t::get_jit_generator() const {
+template <cpu_isa_t isa>
+const jit_generator *brdgmm_kernel_t<isa>::get_jit_generator() const {
     return brgemm_kernel_;
 }
 
-brdgmm_kernel_t::~brdgmm_kernel_t() {
+template <cpu_isa_t isa>
+brdgmm_kernel_t<isa>::~brdgmm_kernel_t() {
     delete brgemm_kernel_;
 }
 

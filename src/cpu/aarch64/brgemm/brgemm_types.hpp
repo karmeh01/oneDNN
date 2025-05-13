@@ -361,6 +361,7 @@ private:
     DNNL_DISALLOW_COPY_AND_ASSIGN(brgemm_kernel_common_t);
 };
 
+template <cpu_isa_t isa>
 struct brdgmm_kernel_t : public brgemm_kernel_t {
     brdgmm_kernel_t(const brgemm_t abrd);
     ~brdgmm_kernel_t();
@@ -369,8 +370,9 @@ struct brdgmm_kernel_t : public brgemm_kernel_t {
     void operator()(brgemm_kernel_params_t *) const;
     virtual const jit_generator *get_jit_generator() const;
 
+
 private:
-    jit_brdgmm_kernel_base_t *brgemm_kernel_ = nullptr;
+    jit_brdgmm_kernel_base_t<isa> *brgemm_kernel_ = nullptr;
 
     DNNL_DISALLOW_COPY_AND_ASSIGN(brdgmm_kernel_t);
 };
