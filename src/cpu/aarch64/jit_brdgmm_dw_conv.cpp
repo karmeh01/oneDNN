@@ -240,8 +240,11 @@ void brdgmm_dw_convolution_fwd_t<isa>::pd_t::init_batch_elements() {
         const size_t src_h_stride = jcp.ngroups * jcp.iw * jcp.src_dsz;
         const size_t src_d_stride = jcp.ngroups * jcp.ih * jcp.iw * jcp.src_dsz;
 
+        // Account for minimum memory block size
+        const size_t mem_blk_size = jcp.ch_block == 4 ? 8 : jcp.ch_block;
+
         const size_t wei_w_stride
-                = rnd_up(jcp.ngroups, jcp.ch_block) * jcp.wei_dsz;
+                = rnd_up(jcp.ngroups, mem_blk_size) * jcp.wei_dsz;
         const size_t wei_h_stride = wei_w_stride * jcp.kw;
         const size_t wei_d_stride = wei_h_stride * jcp.kh;
 
@@ -657,6 +660,7 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::execute(
 }
 template struct brdgmm_dw_convolution_fwd_t<sve_512>;
 template struct brdgmm_dw_convolution_fwd_t<sve_256>;
+template struct brdgmm_dw_convolution_fwd_t<sve_128>;
 } // namespace aarch64
 } // namespace cpu
 } // namespace impl
