@@ -375,7 +375,9 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::pd_t::init_brdgmm_conf() {
     CHECK(init_bcp(ker_idx, jcp.ow, jcp.ngroups)); // default full row kernel.
 
     const auto &bcp_0 = bcps_[0];
-    jcp.ch_block = bcp_0.ld_block;
+    jcp.ch_block = is_superset(jcp.isa, sve_512)
+            ? bcp_0.ld_block
+            : 8;
     jcp.nb_ch = div_up(jcp.ngroups, jcp.ch_block);
     const auto wei_tag = is_3d   ? (jcp.ch_block == 16 ? format_tag::dhwioG16g
                                                        : format_tag::dhwioG8g)
@@ -657,6 +659,7 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::execute(
 }
 template struct brdgmm_dw_convolution_fwd_t<sve_512>;
 template struct brdgmm_dw_convolution_fwd_t<sve_256>;
+template struct brdgmm_dw_convolution_fwd_t<sve_128>;
 } // namespace aarch64
 } // namespace cpu
 } // namespace impl
