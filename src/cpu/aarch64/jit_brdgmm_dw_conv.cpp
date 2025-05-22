@@ -240,8 +240,10 @@ void brdgmm_dw_convolution_fwd_t<isa>::pd_t::init_batch_elements() {
         const size_t src_h_stride = jcp.ngroups * jcp.iw * jcp.src_dsz;
         const size_t src_d_stride = jcp.ngroups * jcp.ih * jcp.iw * jcp.src_dsz;
 
+        const size_t memory_blk_size = jcp.ch_block == 4 ? 8 : jcp.ch_block;
+
         const size_t wei_w_stride
-                = rnd_up(jcp.ngroups, jcp.ch_block) * jcp.wei_dsz;
+                = rnd_up(jcp.ngroups, memory_blk_size) * jcp.wei_dsz;
         const size_t wei_h_stride = wei_w_stride * jcp.kw;
         const size_t wei_d_stride = wei_h_stride * jcp.kh;
 
@@ -375,9 +377,7 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::pd_t::init_brdgmm_conf() {
     CHECK(init_bcp(ker_idx, jcp.ow, jcp.ngroups)); // default full row kernel.
 
     const auto &bcp_0 = bcps_[0];
-    jcp.ch_block = is_superset(jcp.isa, sve_512)
-            ? bcp_0.ld_block
-            : 8;
+    jcp.ch_block = bcp_0.ld_block;
     jcp.nb_ch = div_up(jcp.ngroups, jcp.ch_block);
     const auto wei_tag = is_3d   ? (jcp.ch_block == 16 ? format_tag::dhwioG16g
                                                        : format_tag::dhwioG8g)
