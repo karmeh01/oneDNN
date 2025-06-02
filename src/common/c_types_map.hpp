@@ -843,6 +843,7 @@ const format_tag_t aBdefC16c64b2c = dnnl_aBdefC16c64b2c;
 const format_tag_t aBdefC16c64b4c = dnnl_aBdefC16c64b4c;
 const format_tag_t decbA16a = dnnl_decbA16a;
 const format_tag_t decbA8a = dnnl_decbA8a;
+const format_tag_t decbA4a = dnnl_decbA4a;
 const format_tag_t defcbA16a = dnnl_defcbA16a;
 const format_tag_t defcbA8a = dnnl_defcbA8a;
 const format_tag_t defcbA4a = dnnl_defcbA4a;
@@ -1842,6 +1843,7 @@ const format_tag_t gIdhwO24i4o = dnnl_gIdhwO24i4o;
 
 const format_tag_t hwioG16g = dnnl_hwioG16g;
 const format_tag_t hwioG8g = dnnl_hwioG8g;
+const format_tag_t hwioG4g = dnnl_hwioG4g;
 const format_tag_t dhwioG16g = dnnl_dhwioG16g;
 const format_tag_t dhwioG8g = dnnl_dhwioG8g;
 const format_tag_t dhwioG4g = dnnl_dhwioG4g;

@@ -381,8 +381,9 @@ status_t brdgmm_dw_convolution_fwd_t<isa>::pd_t::init_brdgmm_conf() {
             ? (jcp.ch_block == 16 ? format_tag::dhwioG16g
                                   : (jcp.ch_block == 8 ? format_tag::dhwioG8g
                                                        : format_tag::dhwioG4g))
-            : jcp.ch_block == 16 ? format_tag::hwioG16g
-                                 : format_tag::hwioG8g;
+            : (jcp.ch_block == 16 ? format_tag::hwioG16g
+                                 : (jcp.ch_block == 8 ? format_tag::hwioG8g
+                                                       : format_tag::hwioG4g));
 
     const memory_desc_wrapper weights_d(&weights_md_);
     CHECK(init_tag(weights_md_, weights_d, wei_tag, true));
