@@ -126,6 +126,10 @@ status_t jit_uni_dw_conv_fwd_kernel_t<isa, kernel_dt>::init_conf(
         jcp.wei_tag = weights_d.matches_one_of_tag(wei_tag);
     }
 
+    if (jcp.wei_tag == format_tag::undef) {
+        jcp.wei_tag = blocked_tag;
+    }
+
     if (dst_d.format_kind() == format_kind::any) {
         CHECK(memory_desc_init_by_tag(dst_md, blocked_tag));
         jcp.dst_tag = blocked_tag;
