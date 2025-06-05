@@ -116,8 +116,8 @@ status_t acl_init_conf(acl_conv_conf_t &acp, memory_desc_t &src_md,
 
     acp.with_bias = cd.bias_desc.format_kind != format_kind::undef;
 
-    if (wei_d.format_kind() != format_kind::any && !is_depthwise)
-        return status::unimplemented;
+//     if (wei_d.format_kind() != format_kind::any && !is_depthwise)
+//         return status::unimplemented;
 
     auto src_tag = memory_desc_matches_one_of_tag(
             src_md, format_tag::nhwc, format_tag::nchw);
