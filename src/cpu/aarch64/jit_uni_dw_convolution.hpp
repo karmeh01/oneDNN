@@ -120,8 +120,8 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
     typedef typename prec_traits_t<dst_type>::type dst_data_t;
 
     // TODO remove
-    void dump_weights_by_channel(const char *filename, const data_t *weights,
-            const dnnl::impl::memory_desc_wrapper &md) {
+    void dump_weights(const char *filename, const data_t *weights,
+            const dnnl::impl::memory_desc_wrapper &md) const {
         std::ofstream ofs(filename);
         if (!ofs.is_open()) {
             std::cerr << "Error opening file " << filename << std::endl;
@@ -195,7 +195,7 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
 
             const int n_print = 5;
             printf("First %d weights:\n", n_print);
-            › for (int i = 0; i < n_print; ++i) {
+            for (int i = 0; i < n_print; ++i) {
                 printf("%f ", static_cast<float>(weights_to_use_[i]));
             }
             printf("\n");
