@@ -42,40 +42,22 @@ void jit_uni_dw_convolution_fwd_t<isa, src_type, dst_type>::execute_forward(
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
-    const memory_desc_wrapper weights_d(pd()->weights_md(0));
     const memory_desc_wrapper bias_d(pd()->weights_md(1));
+
+    // Declare weights_d before the if/else
+    memory_desc_wrapper weights_d = pd()->reorder_weights_pd_
+            ? memory_desc_wrapper(&pd()->reordered_weights_md_)
+            : memory_desc_wrapper(pd()->weights_md(0));
 
     const auto &jcp = pd()->jcp_;
 
     const auto *weights = weights_to_use_;
 
     using namespace dnnl::impl::format_tag;
-
-    memory_desc_wrapper used_md(&pd()->reordered_weights_md_);
-    // Now use used_md directly:
-    auto used_tag
-            = used_md.matches_one_of_tag(Goihw16g, Goihw8g, goihw, oihw, any);
-
-    printf("IN EXECUTE_FORWARD\n");
-    printf("Weights in use dims: ");
-    for (int i = 0; i < used_md.ndims(); ++i)
-        printf("%ld ", used_md.dims()[i]);
-    printf("\nWeights in use format tag: %d\n", static_cast<int>(used_tag));
-    if (used_tag == Goihw16g) {
-        printf("Weights in use are in Goihw16g format\n");
-    } else if (used_tag == Goihw8g) {
-        printf("Weights in use are in Goihw8g format\n");
-    } else {
-        printf("Weights in use are in unknown format\n");
-    }
-
-    // Print first 10 weight values
-    const int n_print = 5;
-    printf("First %d weights:\n", n_print);
-    for (int i = 0; i < n_print; ++i) {
-        printf("%f ", static_cast<float>(weights_to_use_[i]));
-    }
-    printf("\n");
+    // if (src_type != data_type::f32 && dst_type != data_type::f32) {
+    //     dump_weights("/home/karmeh01/Tickets/MLINFSW-1592/weights_after.txt",
+    //             weights, weights_d);
+    // }
 
     f32_data_t *bias = nullptr;
     if (pd()->desc()->bias_desc.data_type == data_type::bf16) {

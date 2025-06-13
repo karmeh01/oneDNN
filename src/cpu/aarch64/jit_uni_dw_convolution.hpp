@@ -76,13 +76,15 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
                 // Choose the optimal tag as in kernel conf
                 using namespace dnnl::impl::format_tag;
                 const auto desired_tag = isa == sve_512 ? Goihw16g : Goihw8g;
-                memory_desc_t optimal_md = weights_md_;
+
                 if (memory_desc_wrapper(weights_md_)
                                 .matches_one_of_tag(desired_tag)
                         != desired_tag) {
-                    CHECK(memory_desc_init_by_tag(optimal_md, desired_tag));
+                    CHECK(memory_desc_init_by_tag(
+                            reordered_weights_md_, desired_tag));
+                } else {
+                    reordered_weights_md_ = weights_md_;
                 }
-                reordered_weights_md_ = optimal_md;
 
                 if (reordered_weights_md_ != weights_md_) {
                     CHECK(reorder_primitive_desc_create(reorder_weights_pd_,
@@ -122,18 +124,37 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
     // TODO remove
     void dump_weights(const char *filename, const data_t *weights,
             const dnnl::impl::memory_desc_wrapper &md) const {
+        using namespace dnnl::impl::format_tag;
         std::ofstream ofs(filename);
         if (!ofs.is_open()) {
             std::cerr << "Error opening file " << filename << std::endl;
             return;
         }
+        auto tag = md.matches_one_of_tag(Goihw16g, Goihw8g, goihw, oihw, any);
+        if (tag == Goihw16g) {
+            ofs << "Weights are in Goihw16g format\n";
+        } else if (tag == Goihw8g) {
+            ofs << "Weights are in Goihw8g format\n";
+        } else if (tag == goihw) {
+            ofs << "Weights are in goihw format\n";
+        } else if (tag == oihw) {
+            ofs << "Weights are in oihw format\n";
+        } else {
+            ofs << "Weights are in unknown format\n";
+        }
         // Assuming md.ndims() == 4 and the dimensions are in order:
         // channels, dummy, height, width.
         const int channels = md.dims()[0];
+        // const int input = md.dims()[1];
+        // const int output = md.dims()[2];
         const int height = md.dims()[3];
         const int width = md.dims()[4];
         const int channel_stride
                 = height * width; // assuming contiguous per channel
+        ofs << "\nDimensions: ";
+        for (int i = 0; i < md.ndims(); ++i)
+            ofs << md.dims()[i] << " ";
+        ofs << "\n\n";
 
         for (int c = 0; c < channels; ++c) {
             ofs << "Channel " << c << ":\n";
@@ -184,75 +205,39 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
             r_ctx.set_scratchpad_grantor(ns.grantor());
 
             const memory_desc_wrapper orig_md(pd()->weights_md());
-            auto orig_tag = orig_md.matches_one_of_tag(
-                    Goihw16g, Goihw8g, goihw, oihw, any);
-            // orig_tag will be the matching format_tag, or format_tag::undef if none match
-            printf("Original weights dims: ");
-            for (int i = 0; i < orig_md.ndims(); ++i)
-                printf("%ld ", orig_md.dims()[i]);
-            printf("\nOriginal weights format tag: %d\n",
-                    static_cast<int>(orig_tag));
-
-            const int n_print = 5;
-            printf("First %d weights:\n", n_print);
-            for (int i = 0; i < n_print; ++i) {
-                printf("%f ", static_cast<float>(weights_to_use_[i]));
-            }
-            printf("\n");
-
-            // Assuming you have a memory_desc_wrapper for the original weights
-            dump_weights(
-                    "/home/karmeh01/Tickets/MLINFSW-1592/weights_before.txt",
-                    weights_to_use_, orig_md);
-
-            reorder_weights_->execute(r_ctx);
-
-            // const memory_desc_wrapper reordered_md(
-            //         &pd()->reordered_weights_md_);
-
-            // auto reordered_tag = reordered_md.matches_one_of_tag(
+            // auto orig_tag = orig_md.matches_one_of_tag(
             //         Goihw16g, Goihw8g, goihw, oihw, any);
             // // orig_tag will be the matching format_tag, or format_tag::undef if none match
-            // printf("Reordered weights dims: ");
-            // for (int i = 0; i < reordered_md.ndims(); ++i)
-            //     printf("%ld ", reordered_md.dims()[i]);
-            // printf("\nReordered weights format tag: %d\n",
-            //         static_cast<int>(reordered_tag));
+            // printf("Original weights dims: ");
+            // for (int i = 0; i < orig_md.ndims(); ++i)
+            //     printf("%ld ", orig_md.dims()[i]);
+            // printf("\nOriginal weights format tag: %d\n",
+            //         static_cast<int>(orig_tag));
 
-            // using namespace dnnl::impl::format_tag;
-            // if (reordered_tag == Goihw16g) {
-            //     printf("Reordered weights are in Goihw16g format\n");
-            // } else if (reordered_tag == Goihw8g) {
-            //     printf("Reordered weights are in Goihw8g format\n");
-            // } else {
-            //     printf("Reordered weights are in unknown format\n");
+            // const int n_print = 5;
+            // printf("First %d weights:\n", n_print);
+            // for (int i = 0; i < n_print; ++i) {
+            //     printf("%f ", static_cast<float>(weights_to_use_[i]));
             // }
+            // printf("\n");
+
+            // Assuming you have a memory_desc_wrapper for the original weights
+            // dump_weights(
+            //         "/home/karmeh01/Tickets/MLINFSW-1592/weights_before.txt",
+            //         weights_to_use_, orig_md);
+
+            reorder_weights_->execute(r_ctx);
 
             // now use the scratchpad buffer for your DW kernel
             weights_to_use_ = scratchpad.template get<data_t>(
                     key_conv_permuted_weights);
+
+            // const memory_desc_wrapper used_md(&pd()->reordered_weights_md_);
+            // Create a memory descriptor wrapper for the reordered weights descriptor
+            // dump_weights(
+            //         "/home/karmeh01/Tickets/MLINFSW-1592/weights_after.txt",
+            //         weights_to_use_, used_md);
         }
-
-        memory_desc_wrapper used_md(&pd()->reordered_weights_md_);
-        // Now use used_md directly:
-        auto used_tag = used_md.matches_one_of_tag(
-                Goihw16g, Goihw8g, goihw, oihw, any);
-
-        printf("Weights in use dims: ");
-        for (int i = 0; i < used_md.ndims(); ++i)
-            printf("%ld ", used_md.dims()[i]);
-        printf("\nWeights in use format tag: %d\n", static_cast<int>(used_tag));
-        if (used_tag == Goihw16g) {
-            printf("Weights in use are in Goihw16g format\n");
-        } else if (used_tag == Goihw8g) {
-            printf("Weights in use are in Goihw8g format\n");
-        } else {
-            printf("Weights in use are in unknown format\n");
-        }
-
-        // Create a memory descriptor wrapper for the reordered weights descriptor
-        dump_weights("/home/karmeh01/Tickets/MLINFSW-1592/weights_after.txt",
-                weights_to_use_, used_md);
 
         execute_forward(ctx);
         return status::success;
