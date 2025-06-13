@@ -37,7 +37,7 @@ template <cpu_isa_t isa, data_type_t src_type, data_type_t dst_type>
 void jit_uni_dw_convolution_fwd_t<isa, src_type, dst_type>::execute_forward(
         const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const data_t *, DNNL_ARG_SRC);
-    auto weights = CTX_IN_MEM(const data_t *, DNNL_ARG_WEIGHTS);
+    // auto weights = CTX_IN_MEM(const data_t *, DNNL_ARG_WEIGHTS);
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
@@ -46,6 +46,36 @@ void jit_uni_dw_convolution_fwd_t<isa, src_type, dst_type>::execute_forward(
     const memory_desc_wrapper bias_d(pd()->weights_md(1));
 
     const auto &jcp = pd()->jcp_;
+
+    const auto *weights = weights_to_use_;
+
+    using namespace dnnl::impl::format_tag;
+
+    memory_desc_wrapper used_md(&pd()->reordered_weights_md_);
+    // Now use used_md directly:
+    auto used_tag
+            = used_md.matches_one_of_tag(Goihw16g, Goihw8g, goihw, oihw, any);
+
+    printf("IN EXECUTE_FORWARD\n");
+    printf("Weights in use dims: ");
+    for (int i = 0; i < used_md.ndims(); ++i)
+        printf("%ld ", used_md.dims()[i]);
+    printf("\nWeights in use format tag: %d\n", static_cast<int>(used_tag));
+    if (used_tag == Goihw16g) {
+        printf("Weights in use are in Goihw16g format\n");
+    } else if (used_tag == Goihw8g) {
+        printf("Weights in use are in Goihw8g format\n");
+    } else {
+        printf("Weights in use are in unknown format\n");
+    }
+
+    // Print first 10 weight values
+    const int n_print = 5;
+    printf("First %d weights:\n", n_print);
+    for (int i = 0; i < n_print; ++i) {
+        printf("%f ", static_cast<float>(weights_to_use_[i]));
+    }
+    printf("\n");
 
     f32_data_t *bias = nullptr;
     if (pd()->desc()->bias_desc.data_type == data_type::bf16) {
