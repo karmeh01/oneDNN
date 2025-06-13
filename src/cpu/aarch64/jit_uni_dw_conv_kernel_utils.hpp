@@ -265,11 +265,13 @@ status_t jit_uni_dw_conv_fwd_kernel_t<isa, kernel_dt>::init_conf(
         jcp.ngroups = rnd_up(jcp.ngroups, simd_w);
     }
 
+    bool wei_ok = jcp.wei_tag == wei_tag;
     bool args_ok = true && jcp.oc == jcp.ngroups && jcp.ic == jcp.ngroups
-            && jcp.ngroups % simd_w == 0 && jcp.wei_tag == wei_tag
+            && jcp.ngroups % simd_w == 0 //&& jcp.wei_tag == wei_tag
             && data_tag != format_tag::undef && jcp.ic <= src_d.padded_dims()[1]
             && jcp.oc <= dst_d.padded_dims()[1]
             && jcp.ngroups <= weights_d.padded_dims()[0];
+    if (kernel_dt == data_type::f32) args_ok &= wei_ok;
     if (!args_ok) return status::unimplemented;
 
     jcp.bia_dt = jcp.with_bias ? cd.bias_desc.data_type : data_type::undef;

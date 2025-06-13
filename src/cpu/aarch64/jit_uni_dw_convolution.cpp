@@ -37,13 +37,16 @@ template <cpu_isa_t isa, data_type_t src_type, data_type_t dst_type>
 void jit_uni_dw_convolution_fwd_t<isa, src_type, dst_type>::execute_forward(
         const exec_ctx_t &ctx) const {
     auto src = CTX_IN_MEM(const data_t *, DNNL_ARG_SRC);
-    auto weights = CTX_IN_MEM(const data_t *, DNNL_ARG_WEIGHTS);
+    auto weights = weights_to_use_;
     auto dst = CTX_OUT_MEM(dst_data_t *, DNNL_ARG_DST);
 
     const memory_desc_wrapper src_d(pd()->src_md());
     const memory_desc_wrapper dst_d(pd()->dst_md());
-    const memory_desc_wrapper weights_d(pd()->weights_md(0));
     const memory_desc_wrapper bias_d(pd()->weights_md(1));
+
+    memory_desc_wrapper weights_d = pd()->reorder_weights_pd_
+            ? memory_desc_wrapper(&pd()->reordered_weights_md_)
+            : memory_desc_wrapper(pd()->weights_md(0));
 
     const auto &jcp = pd()->jcp_;
 

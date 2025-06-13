@@ -22,6 +22,8 @@
 #include "common/c_types_map.hpp"
 #include "common/memory_tracking.hpp"
 #include "common/primitive.hpp"
+#include "common/reorder.hpp"
+#include "common/stream.hpp"
 
 #include "cpu/aarch64/cpu_barrier.hpp"
 #include "cpu/aarch64/cpu_reducer.hpp"
@@ -65,14 +67,47 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
                             dst_md_, *attr());
             if (status != status::success) return status;
 
+            if (desc()->weights_desc.data_type == data_type::bf16) {
+                using namespace dnnl::impl::format_tag;
+
+                reordered_weights_md_ = weights_md_;
+                const auto desired_tag = isa == sve_512 ? Goihw16g : Goihw8g;
+
+                if (memory_desc_wrapper(weights_md_)
+                                .matches_one_of_tag(desired_tag)
+                        != desired_tag) {
+                    CHECK(memory_desc_init_by_tag(
+                            reordered_weights_md_, desired_tag));
+                } else {
+                    reordered_weights_md_ = weights_md_;
+                }
+
+                if (reordered_weights_md_ != weights_md_) {
+                    CHECK(reorder_primitive_desc_create(reorder_weights_pd_,
+                            engine, &weights_md_, &reordered_weights_md_));
+                }
+            }
+
             auto scratchpad = scratchpad_registry().registrar();
             jit_uni_dw_conv_fwd_kernel_t<isa, src_type>::init_scratchpad(
                     scratchpad, jcp_);
+
+            if (reorder_weights_pd_) {
+                scratchpad.book(memory_tracking::names::key_nested,
+                        reorder_weights_pd_->scratchpad_registry());
+                scratchpad.template book<
+                        typename prec_traits_t<src_type>::type>(
+                        memory_tracking::names::key_conv_permuted_weights,
+                        memory_desc_wrapper(reordered_weights_md_).nelems());
+            }
 
             return status::success;
         }
 
         jit_conv_conf_t jcp_ = utils::zero<decltype(jcp_)>();
+
+        std::shared_ptr<primitive_desc_t> reorder_weights_pd_;
+        memory_desc_t reordered_weights_md_;
     };
 
     jit_uni_dw_convolution_fwd_t(const pd_t *apd) : primitive_t(apd) {}
@@ -83,12 +118,47 @@ struct jit_uni_dw_convolution_fwd_t : public primitive_t {
     typedef typename prec_traits_t<dst_type>::type dst_data_t;
 
     status_t init(engine_t *engine) override {
+        if (pd()->reorder_weights_pd_)
+            pd()->reorder_weights_pd_->create_primitive(
+                    reorder_weights_, engine);
         CHECK(safe_ptr_assign(kernel_,
                 new jit_uni_dw_conv_fwd_kernel_t<isa, src_type>(pd()->jcp_)));
         return kernel_->create_kernel();
     }
 
     status_t execute(const exec_ctx_t &ctx) const override {
+        using namespace memory_tracking::names;
+        using namespace dnnl::impl::format_tag;
+
+        auto weights = CTX_IN_MEM(const data_t *, DNNL_ARG_WEIGHTS);
+        weights_to_use_ = weights;
+        if (pd()->reorder_weights_pd_) {
+            auto scratchpad = ctx.get_scratchpad_grantor();
+            auto dst_storage
+                    = scratchpad.get_memory_storage(key_conv_permuted_weights);
+            std::unique_ptr<memory_t, memory_deleter_t> dst_mem;
+
+            engine_t *engine = ctx.stream()->engine();
+            CHECK(safe_ptr_assign(dst_mem,
+                    new memory_t(engine, &pd()->reordered_weights_md_,
+                            std::move(dst_storage))));
+
+            exec_args_t r_args;
+            r_args[DNNL_ARG_SRC] = ctx.args().at(DNNL_ARG_WEIGHTS);
+            r_args[DNNL_ARG_DST] = {dst_mem.get(), false};
+            exec_ctx_t r_ctx(ctx, std::move(r_args));
+            nested_scratchpad_t ns(ctx, key_nested, reorder_weights_);
+            r_ctx.set_scratchpad_grantor(ns.grantor());
+
+            const memory_desc_wrapper orig_md(pd()->weights_md());
+
+            reorder_weights_->execute(r_ctx);
+
+            weights_to_use_ = scratchpad.template get<data_t>(
+                    key_conv_permuted_weights);
+
+        }
+
         execute_forward(ctx);
         return status::success;
     }
@@ -98,6 +168,8 @@ private:
     const pd_t *pd() const { return (const pd_t *)primitive_t::pd().get(); }
 
     std::unique_ptr<jit_uni_dw_conv_fwd_kernel_t<isa, src_type>> kernel_;
+    std::shared_ptr<primitive_t> reorder_weights_;
+    mutable const data_t *weights_to_use_ = nullptr;
 };
 using jit_sve_512_dw_convolution_fwd_t
         = jit_uni_dw_convolution_fwd_t<sve_512, data_type::f32>;
