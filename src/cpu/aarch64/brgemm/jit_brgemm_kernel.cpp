@@ -785,7 +785,7 @@ void jit_brgemm_kernel_t::zero_accumulators(int bd_block2, bool is_bdb_tail,
         auto zmm = accm(ld_block2, bd, ld);
         // This part is moved here from apply_alpha_beta function so that fadd instruction can be avoided.
         // This is also required only when K is blocked.
-        if (need_to_apply_beta) {
+        if (need_to_apply_beta && brg.LDB > 1) {
             const bool is_tail = is_ld_tail && ld + 1 == ld_block2;
             const auto k_mask = is_tail ? ld_tail_mask : ld_full_mask;
 
@@ -1156,9 +1156,26 @@ void jit_brgemm_kernel_t::store_accumulators_without_post_ops(
                 base_offset = offset;
                 x_addr = reg_tmp_;
             }
-            if (brg.LDB == 1) {
+            if (brg.LDB == 1 && brg.beta == 0.f) {
                 faddv(scalar_reg, ld_full_mask, zmm.s);
-                STR_IMM(scalar_reg, x_addr, offset - base_offset);
+                STR_IMM(scalar_reg, x_addr, (offset - base_offset));
+            } else if (brg.LDB == 1 && brg.beta != 0.f) {
+
+                // const int offset = C_offset(bd, ld);
+
+                // int base_offset = 0;
+                // auto x_addr = reg_aux_C;
+
+                // if ((unsigned)(offset - base_offset) > cpu_sveLen * 7) {
+                //     add_imm(reg_tmp_, reg_aux_C, offset, X_TMP_0);
+                //     base_offset = offset;
+                //     x_addr = reg_tmp_;
+                // }
+                // LD_MUL_VL(ld1w, zmm.s, ld_tail_mask, x_addr, offset - base_offset, 4);
+
+                LDR_IMM(scalar_reg, x_addr, (offset - base_offset));
+                fadda(scalar_reg, ld_full_mask, zmm.s);
+                STR_IMM(scalar_reg, x_addr, (offset - base_offset));
             } else {
                 ST_MUL_VL(st1w, zmm.s, mask, x_addr, offset - base_offset, 4);
             }
