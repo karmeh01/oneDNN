@@ -307,6 +307,7 @@ private:
     void apply_alpha_beta(int bd_block, int ld_block, bool is_ld_tail);
     void apply_post_ops(int bd_block, int ld_block2, int ldb_and_bdb_offset,
             bool is_ld_tail);
+    void sum_into_one_lane(int bd_block, int ld_block2, bool is_ld_tail);
     void restore_A_B_matrices();
     void set_A_B_matrices();
 
@@ -1212,6 +1213,7 @@ void jit_brgemm_kernel_t::store_accumulators(int bd_block2, bool is_bdb_tail,
         LDR_IMM(reg_do_post_ops, X_SP, reg_do_post_ops_offs_);
         cmp_imm(reg_do_post_ops, 0, X_TMP_0);
         b(EQ, label_store_without_post_ops);
+        sum_into_one_lane(bd_block, ld_block2, is_ld_tail);
         store_accumulators_apply_post_ops(bd_block, ld_block2, 0, is_ld_tail);
         bl(label_done);
 
@@ -1219,6 +1221,31 @@ void jit_brgemm_kernel_t::store_accumulators(int bd_block2, bool is_bdb_tail,
     }
     store_accumulators_without_post_ops(bd_block, ld_block2, is_ld_tail);
     L_aligned(label_done);
+}
+
+void jit_brgemm_kernel_t::sum_into_one_lane(int bd_block, int ld_block2, bool is_ld_tail) {
+    auto x_addr = reg_aux_C;
+    int base_offset = 0;
+
+    auto scalar_reg = SReg(0);
+
+    for (int bd = 0; bd < bd_block; bd++) {
+        for (int ld = 0; ld < ld_block2; ld++) {
+            auto zmm = accm(ld_block2, bd, ld);
+            const int offset = C_offset(bd, ld);
+
+            if ((unsigned)(offset - base_offset) > cpu_sveLen * 7) {
+                add_imm(reg_tmp_, reg_aux_C, offset, X_TMP_0);
+                base_offset = offset;
+                x_addr = reg_tmp_;
+            }
+            
+            LDR_IMM(scalar_reg, x_addr, (offset - base_offset));
+            fadda(scalar_reg, ld_full_mask, zmm.s);
+            eor(zmm.d, zmm.d, zmm.d);
+            mov(zmm.s, ld_tail_mask, scalar_reg);
+        }
+    }
 }
 
 void jit_brgemm_kernel_t::restore_A_B_matrices() {
