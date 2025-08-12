@@ -1161,19 +1161,6 @@ void jit_brgemm_kernel_t::store_accumulators_without_post_ops(
                 faddv(scalar_reg, ld_full_mask, zmm.s);
                 STR_IMM(scalar_reg, x_addr, (offset - base_offset));
             } else if (brg.LDB == 1 && brg.beta != 0.f) {
-
-                // const int offset = C_offset(bd, ld);
-
-                // int base_offset = 0;
-                // auto x_addr = reg_aux_C;
-
-                // if ((unsigned)(offset - base_offset) > cpu_sveLen * 7) {
-                //     add_imm(reg_tmp_, reg_aux_C, offset, X_TMP_0);
-                //     base_offset = offset;
-                //     x_addr = reg_tmp_;
-                // }
-                // LD_MUL_VL(ld1w, zmm.s, ld_tail_mask, x_addr, offset - base_offset, 4);
-
                 LDR_IMM(scalar_reg, x_addr, (offset - base_offset));
                 fadda(scalar_reg, ld_full_mask, zmm.s);
                 STR_IMM(scalar_reg, x_addr, (offset - base_offset));
@@ -1239,9 +1226,13 @@ void jit_brgemm_kernel_t::sum_into_one_lane(int bd_block, int ld_block2, bool is
                 base_offset = offset;
                 x_addr = reg_tmp_;
             }
-            
-            LDR_IMM(scalar_reg, x_addr, (offset - base_offset));
-            fadda(scalar_reg, ld_full_mask, zmm.s);
+
+            if (brg.LDB == 1 && brg.beta == 0.f) {
+                faddv(scalar_reg, ld_full_mask, zmm.s);
+            } else if (brg.LDB == 1 && brg.beta != 0.f) {
+                LDR_IMM(scalar_reg, x_addr, (offset - base_offset));
+                fadda(scalar_reg, ld_full_mask, zmm.s);
+            }
             eor(zmm.d, zmm.d, zmm.d);
             mov(zmm.s, ld_tail_mask, scalar_reg);
         }
@@ -1825,13 +1816,13 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
         int rdb_tail = brg.rdb_tail;
         MAYBE_UNUSED(rdb_tail);
         if (brg.LDB == 1) {
-            rdb_val = 4 * brg.rdb / (cpu_sveLen / sizeof(float));
-            rdb_tail = brg.rdb_tail % (cpu_sveLen / sizeof(float));
+            rdb_val = (4 * brg.rdb + brg.rdb_tail) / (cpu_sveLen / sizeof(float));
+            rdb_tail = (4 * brg.rdb + brg.rdb_tail) % (cpu_sveLen / sizeof(float));
         }
 
         if (rdb_val > 0) {
             Label rdb_loop_label;
-            mov(reg_rdb_loop, rdb_val);             // For MxN:Nx1 = N // 4    TODO: change to reflect loading a full vector
+            mov(reg_rdb_loop, rdb_val);
             L_aligned(rdb_loop_label, 64);
             {
                 const bool is_rd_tail = false;
@@ -1856,7 +1847,7 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
             }
             b(GT, rdb_loop_label);
         }
-        if (brg.rdb_tail != 0) {
+        if (rdb_tail != 0) {
             const bool is_rd_tail = true;
 
             if (brg.LDB == 1) {
