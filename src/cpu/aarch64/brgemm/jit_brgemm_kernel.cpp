@@ -1593,8 +1593,8 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
 
     int rd_loop = 1, rd_tail_size = brg.rdb_tail;
 
-    auto load_full_vector = [=](const ZReg &z1, size_t offset, bool is_tail,
-                             data_type_t dt) {
+    auto load_values = [=](const ZReg &z1, size_t offset, bool is_tail,
+                            bool is_rd_tail, data_type_t dt) {
         if (is_tail) {
             eor(z1.d, z1.d, z1.d);
             auto xmm_tmp = z_tmp_1();
@@ -1604,46 +1604,20 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
             dup(z1.s, xmm_tmp.s[0]);
         } else {
+            const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
             if (dt == data_type::f32) {
-                if (offset < (1 << 6)) {
-                    ld1w(z1.s, P_ALL_ONE / T_z,
+                if (offset < (1 << 6)  && !is_rd_tail) {
+                    ld1w(z1.s, mask / T_z,
                             ptr(reg_aux_A, (int32_t)offset));
                 } else {
                     add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                    ld1w(z1.s, P_ALL_ONE / T_z, ptr(X_DEFAULT_ADDR));
+                    ld1w(z1.s, mask / T_z, ptr(X_DEFAULT_ADDR));
                 }
             } else if (dt == data_type::bf16) {
                 assert(!"unsupported\n");
             } else if (one_of(dt, data_type::s8, data_type::u8)) {
                 add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                ld1rw(z1.s, P_ALL_ONE / T_z, ptr(X_DEFAULT_ADDR));
-            } else if (dt == data_type::f16) {
-                assert(!"unsupported\n");
-            }
-        }
-
-        if (brg.req_s8s8_compensation) assert(!"unsupported\n");
-    };
-
-    auto load_tail = [=](const ZReg &z1, size_t offset, bool is_tail,
-                             data_type_t dt) {
-        if (is_tail) {
-            eor(z1.d, z1.d, z1.d);
-            auto xmm_tmp = z_tmp_1();
-            add_imm(X_DEFAULT_ADDR, reg_aux_A, offset * brg.typesize_A,
-                    X_TMP_0);
-            set_preg(P_TMP.b, rd_tail_size, X_TMP_0, X_TMP_1);
-            ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
-            dup(z1.s, xmm_tmp.s[0]);
-        } else {
-            if (dt == data_type::f32) {
-                add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                ld1w(z1.s, gemv_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
-            } else if (dt == data_type::bf16) {
-                assert(!"unsupported\n");
-            } else if (one_of(dt, data_type::s8, data_type::u8)) {
-                add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                ld1rw(z1.s, gemv_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
+                ld1rw(z1.s, mask / T_z, ptr(X_DEFAULT_ADDR));
             } else if (dt == data_type::f16) {
                 assert(!"unsupported\n");
             }
@@ -1671,8 +1645,8 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             for (int bd = bd_b; bd < bd_e && !is_emdbd; bd++) {
                 const auto bd_by_load_bytes = (bd >= bd_e - rows_by_load_bytes
                         || brg.brgattr.wary_A_k_tail_read);
-                load_full_vector(bcst(bd), A_offset(bd, rd),
-                        have_to_load_bytes && bd_by_load_bytes, brg.dt_a);
+                load_values(bcst(bd), A_offset(bd, rd),
+                        have_to_load_bytes && bd_by_load_bytes, false, brg.dt_a);
             }
             for (int ld = 0; ld < ld_block2; ld++) {
                 const auto mask = is_ld_tail ? ld_tail_mask : P_ALL_ONE;
@@ -1739,13 +1713,8 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
                     const auto bd_by_load_bytes
                             = (bd >= bd_e - rows_by_load_bytes
                                     || brg.brgattr.wary_A_k_tail_read);
-                    if (is_rd_tail) {
-                        load_tail(bcst(), A_offset(bd, rd),
-                                (have_to_load_bytes && bd_by_load_bytes), brg.dt_a);
-                    } else {
-                        load_full_vector(bcst(), A_offset(bd, rd),
-                                (have_to_load_bytes && bd_by_load_bytes), brg.dt_a);
-                    }
+                    load_values(bcst(), A_offset(bd, rd),
+                            (have_to_load_bytes && bd_by_load_bytes), is_rd_tail, brg.dt_a);
                 }
                 //The current implementaion of prefetch is not giving any gain in performance but is rather introducing some latency. Therefore it is removed util a new useful implementation is deviced.
                 const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
