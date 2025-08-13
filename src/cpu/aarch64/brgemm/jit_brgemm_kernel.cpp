@@ -1638,13 +1638,13 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             dup(z1.s, xmm_tmp.s[0]);
         } else {
             if (dt == data_type::f32) {      // Load part of a full vector from B
-                if (offset < (1 << 3)) {
-                    ld1w(z1.s, test_tail_mask / T_z,
-                            ptr(reg_aux_A, (int32_t)offset));
-                } else {
+                // if (offset < (1 << 6)) {
+                //     ld1w(z1.s, test_tail_mask / T_z,
+                //             ptr(reg_aux_A, (int32_t)offset));
+                // } else {
                     add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
                     ld1w(z1.s, test_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
-                }
+                // }
             } else if (dt == data_type::bf16) {
                 assert(!"unsupported\n");
             } else if (one_of(dt, data_type::s8, data_type::u8)) {
