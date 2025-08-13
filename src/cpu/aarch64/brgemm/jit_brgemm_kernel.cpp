@@ -241,7 +241,7 @@ private:
 
     PReg ld_full_mask = PReg(2);
     PReg ld_tail_mask = PReg(3);
-    PReg test_tail_mask = PReg(4);
+    PReg gemv_tail_mask = PReg(4);
 
     ZReg accm(int ld_block, int bd, int ld) {
         return ZReg(max_effective_vregs - 1 - (bd * ld_block + ld));
@@ -319,7 +319,6 @@ private:
             bool is_rd_tail, bool is_ld_tail, int vpad, int rows_for_rd_tail);
     void gemv_microkernel_sve512(int bd_block2, bool is_bdb_tail, int ld_block,
             bool is_rd_tail, bool is_ld_tail, int vpad, int rows_for_rd_tail);
-    void accumulate_results(bool is_bdb_tail, int ld_block2);
 
     void ldb_loop(int bd_block2, bool is_bdb_tail, int ld_block,
             int ldb_loop_length, bool is_reg_tail, bool is_ld_tail,
@@ -1583,7 +1582,7 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
         bool is_bdb_tail, int ld_block2, bool is_rd_tail, bool is_ld_tail,
         int vpad, int rows_for_rd_tail) {
     MAYBE_UNUSED(bd_block2);
-    int bd_block = (is_bdb_tail) ? brg.bdb_tail : brg.bd_block;         // Number of accumulators
+    int bd_block = (is_bdb_tail) ? brg.bdb_tail : brg.bd_block;
     const auto bd_b = nstl::max(0, vpad);
     const auto bd_e = nstl::min(bd_block, bd_block + vpad);
     const auto is_valid_bd
@@ -1605,7 +1604,7 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
             dup(z1.s, xmm_tmp.s[0]);
         } else {
-            if (dt == data_type::f32) {      // Load a full vector from B
+            if (dt == data_type::f32) {
                 if (offset < (1 << 6)) {
                     ld1w(z1.s, P_ALL_ONE / T_z,
                             ptr(reg_aux_A, (int32_t)offset));
@@ -1637,19 +1636,14 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
             dup(z1.s, xmm_tmp.s[0]);
         } else {
-            if (dt == data_type::f32) {      // Load part of a full vector from B
-                // if (offset < (1 << 6)) {
-                //     ld1w(z1.s, test_tail_mask / T_z,
-                //             ptr(reg_aux_A, (int32_t)offset));
-                // } else {
-                    add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                    ld1w(z1.s, test_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
-                // }
+            if (dt == data_type::f32) {
+                add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
+                ld1w(z1.s, gemv_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
             } else if (dt == data_type::bf16) {
                 assert(!"unsupported\n");
             } else if (one_of(dt, data_type::s8, data_type::u8)) {
                 add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                ld1rw(z1.s, test_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
+                ld1rw(z1.s, gemv_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
             } else if (dt == data_type::f16) {
                 assert(!"unsupported\n");
             }
@@ -1669,7 +1663,6 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             = (rows_for_rd_tail > 0 || brg.brgattr.wary_A_k_tail_read)
             && is_rd_tail && rd_tail_size != 0 && (brg.is_bf16 || brg.is_int8);
     if (n_bcast_1_load) {
-        // Should not enter here for GEMV
         for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {
             bool have_to_load_bytes
                     = maybe_load_bytes && (rd == rd_loop - brg.rd_step);
@@ -1716,9 +1709,9 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
         auto x_addr = reg_aux_B;
         int base_offset = 0;
 
-        for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {     // 1 for MxN:Nx1
-            for (int ld = 0; ld < ld_block2; ld++) {            // 1 for MxN:Nx1
-                const auto mask = is_rd_tail ? test_tail_mask : P_ALL_ONE;      // TRUE for MxN:Nx1
+        for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {
+            for (int ld = 0; ld < ld_block2; ld++) {       
+                const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE; 
                 if (brg.dt_b == data_type::f16) {
                     assert(!"unsupported\n");
                 } else if (brg.dt_b == data_type::bf16
@@ -1755,7 +1748,7 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
                     }
                 }
                 //The current implementaion of prefetch is not giving any gain in performance but is rather introducing some latency. Therefore it is removed util a new useful implementation is deviced.
-                const auto mask = is_rd_tail ? test_tail_mask : P_ALL_ONE;
+                const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
                 for (int ld = 0; ld < ld_block2; ld++) {
                     auto zmm = accm(ld_block2, bd, ld);
                     if (is_emdbd) {
@@ -1774,22 +1767,6 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
                     }
                 }
             }
-        }
-    }
-}
-
-void jit_brgemm_kernel_t::accumulate_results(bool is_bdb_tail, int ld_block2) {
-    int bd_block = (is_bdb_tail) ? brg.bdb_tail : brg.bd_block;         // Number of accumulators
-    const auto bd_b = 0;
-    const auto bd_e = bd_block;
-
-    auto scalar_reg = SReg(reg_tmp_gpr.getIdx());
-    for (int bd = bd_b; bd < bd_e; bd++) {
-        for (int ld = 0; ld < ld_block2; ld++) {
-            auto zmm = accm(ld_block2, bd, ld);
-            faddv(scalar_reg, ld_full_mask, zmm.s);
-            mov(zmm.s, scalar_reg);
-            // dup(zmm.s, scalar_reg, zmm.s[0]);
         }
     }
 }
@@ -1974,10 +1951,6 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
         if (brg.brgattr.max_bs > 1) {
             LDR_IMM(reg_aux_D, X_SP, reg_aux_D_offs_);
         }
-
-        // if (brg.LDB == 1) {
-        //     accumulate_results(is_bdb_tail, ld_block2);
-        // }
 
         store_accumulators(bd_block2, is_bdb_tail, ld_block2, is_ld_tail,
                 skip_accumulation);
@@ -2219,7 +2192,7 @@ void jit_brgemm_kernel_t::generate() {
     if (brg.is_int8 && !brg.has_int8_vnni) { assert(!"unsupported\n"); }
     // TODO: combine into an if statement - if(brg.LDB == 1) 
     const int k_tail = brg.LDA % simd_w_;
-    set_preg(test_tail_mask.s, k_tail, X_TMP_0, X_TMP_1);
+    set_preg(gemv_tail_mask.s, k_tail, X_TMP_0, X_TMP_1);
 
     read_params();
 
