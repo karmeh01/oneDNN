@@ -1795,8 +1795,8 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
         int rdb_tail = brg.rdb_tail;
         MAYBE_UNUSED(rdb_tail);
         if (brg.LDB == 1) {
-            rdb_val = (4 * brg.rdb + brg.rdb_tail) / (cpu_sveLen / sizeof(float));
-            rdb_tail = (4 * brg.rdb + brg.rdb_tail) % (cpu_sveLen / sizeof(float));
+            rdb_val = (brg.rd_block * brg.rdb + brg.rdb_tail) / (cpu_sveLen / sizeof(float));
+            rdb_tail = (brg.rd_block * brg.rdb + brg.rdb_tail) % (cpu_sveLen / sizeof(float));
         }
 
         if (rdb_val > 0) {
