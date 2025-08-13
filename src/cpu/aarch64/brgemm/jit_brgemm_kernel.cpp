@@ -1200,7 +1200,9 @@ void jit_brgemm_kernel_t::store_accumulators(int bd_block2, bool is_bdb_tail,
         LDR_IMM(reg_do_post_ops, X_SP, reg_do_post_ops_offs_);
         cmp_imm(reg_do_post_ops, 0, X_TMP_0);
         b(EQ, label_store_without_post_ops);
-        sum_into_one_lane(bd_block, ld_block2, is_ld_tail);
+        if (brg.LDB == 1) {
+            sum_into_one_lane(bd_block, ld_block2, is_ld_tail);
+        }
         store_accumulators_apply_post_ops(bd_block, ld_block2, 0, is_ld_tail);
         bl(label_done);
 
@@ -1635,7 +1637,7 @@ void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
             ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
             dup(z1.s, xmm_tmp.s[0]);
         } else {
-            if (dt == data_type::f32) {      // Load a full vector from B
+            if (dt == data_type::f32) {      // Load part of a full vector from B
                 if (offset < (1 << 6)) {
                     ld1w(z1.s, test_tail_mask / T_z,
                             ptr(reg_aux_A, (int32_t)offset));
