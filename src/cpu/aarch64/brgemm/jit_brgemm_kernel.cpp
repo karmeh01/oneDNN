@@ -317,8 +317,6 @@ private:
     void dot_product(ZReg z1, ZReg z2, ZReg z3);
     void gemm_microkernel_sve512(int bd_block2, bool is_bdb_tail, int ld_block,
             bool is_rd_tail, bool is_ld_tail, int vpad, int rows_for_rd_tail, bool is_gemv);
-    void gemv_microkernel_sve512(int bd_block2, bool is_bdb_tail, int ld_block,
-            bool is_rd_tail, bool is_ld_tail, int vpad, int rows_for_rd_tail);
 
     void ldb_loop(int bd_block2, bool is_bdb_tail, int ld_block,
             int ldb_loop_length, bool is_reg_tail, bool is_ld_tail,
@@ -1607,168 +1605,6 @@ void jit_brgemm_kernel_t::gemm_microkernel_sve512(int bd_block2,
     }
 }
 
-void jit_brgemm_kernel_t::gemv_microkernel_sve512(int bd_block2,
-        bool is_bdb_tail, int ld_block2, bool is_rd_tail, bool is_ld_tail,
-        int vpad, int rows_for_rd_tail) {
-    MAYBE_UNUSED(bd_block2);
-    int bd_block = (is_bdb_tail) ? brg.bdb_tail : brg.bd_block;
-    const auto bd_b = nstl::max(0, vpad);
-    const auto bd_e = nstl::min(bd_block, bd_block + vpad);
-    const auto is_valid_bd
-            = need_comp_pads && vpad != 0 ? bd_b <= bd_e : bd_b < bd_e;
-    if (!is_valid_bd) return;
-
-    bool is_emdbd = brg.embd_bcst;
-
-    int rd_loop = 1, rd_tail_size = brg.rdb_tail;
-
-    auto load_values = [=](const ZReg &z1, size_t offset, bool is_tail,
-                            bool is_rd_tail, data_type_t dt) {
-        if (is_tail) {
-            eor(z1.d, z1.d, z1.d);
-            auto xmm_tmp = z_tmp_1();
-            add_imm(X_DEFAULT_ADDR, reg_aux_A, offset * brg.typesize_A,
-                    X_TMP_0);
-            set_preg(P_TMP.b, rd_tail_size, X_TMP_0, X_TMP_1);
-            ld1b(xmm_tmp.b, P_TMP / T_z, ptr(X_DEFAULT_ADDR));
-            dup(z1.s, xmm_tmp.s[0]);
-        } else {
-            const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
-            if (dt == data_type::f32) {
-                if (offset < (1 << 6)  && !is_rd_tail) {
-                    ld1w(z1.s, mask / T_z,
-                            ptr(reg_aux_A, (int32_t)offset));
-                } else {
-                    add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                    ld1w(z1.s, mask / T_z, ptr(X_DEFAULT_ADDR));
-                }
-            } else if (dt == data_type::bf16) {
-                assert(!"unsupported\n");
-            } else if (one_of(dt, data_type::s8, data_type::u8)) {
-                add_imm(X_DEFAULT_ADDR, reg_aux_A, offset, X_TMP_0);
-                ld1rw(z1.s, mask / T_z, ptr(X_DEFAULT_ADDR));
-            } else if (dt == data_type::f16) {
-                assert(!"unsupported\n");
-            }
-        }
-
-        if (brg.req_s8s8_compensation) assert(!"unsupported\n");
-    };
-
-    const bool comp_vpad = vpad != 0
-            && (brg.req_s8s8_compensation
-                    || brg.zp_type_a != brgemm_broadcast_t::none);
-    if (brg.req_cal_comp_pads || comp_vpad)
-        compute_int8_compensation(
-                rd_loop, bd_b, bd_e, bd_block, ld_block2, is_ld_tail, vpad);
-
-    bool maybe_load_bytes
-            = (rows_for_rd_tail > 0 || brg.brgattr.wary_A_k_tail_read)
-            && is_rd_tail && rd_tail_size != 0 && (brg.is_bf16 || brg.is_int8);
-    if (n_bcast_1_load) {
-        for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {
-            bool have_to_load_bytes
-                    = maybe_load_bytes && (rd == rd_loop - brg.rd_step);
-
-            auto rows_by_load_bytes = have_to_load_bytes ? rows_for_rd_tail : 0;
-            for (int bd = bd_b; bd < bd_e && !is_emdbd; bd++) {
-                const auto bd_by_load_bytes = (bd >= bd_e - rows_by_load_bytes
-                        || brg.brgattr.wary_A_k_tail_read);
-                load_values(bcst(bd), A_offset(bd, rd),
-                        have_to_load_bytes && bd_by_load_bytes, false, brg.dt_a);
-            }
-            for (int ld = 0; ld < ld_block2; ld++) {
-                const auto mask = is_ld_tail ? ld_tail_mask : P_ALL_ONE;
-                add_imm(X_DEFAULT_ADDR, reg_aux_B, B_offset(ld, rd), X_TMP_0);
-                if (brg.dt_b == data_type::f16) {
-                    assert(!"unsupported\n");
-                } else if (brg.dt_b == data_type::bf16
-                        && brg.isa_impl == sve_256) {
-                    assert(!"unsupported\n");
-                } else if (is_ld_tail) {
-                    ld1w(load().s, ld_tail_mask / T_z, ptr(X_DEFAULT_ADDR));
-                } else {
-                    ld1w(load().s, P_ALL_ONE / T_z, ptr(X_DEFAULT_ADDR));
-                }
-                for (int bd = bd_b; bd < bd_e; bd++) {
-                    auto vmm = accm(ld_block2, bd, ld);
-                    if (is_emdbd) {
-                        if (A_offset(bd, rd) < (1 << 6)) {
-                            ld1rw(load().s, mask / T_z,
-                                    ptr(reg_aux_A, A_offset(bd, rd)));
-                        } else {
-                            add_imm(X_DEFAULT_ADDR, reg_aux_A, A_offset(bd, rd),
-                                    X_TMP_0);
-                            ld1rw(load().s, mask / T_z, ptr(X_DEFAULT_ADDR));
-                        }
-                        fmla(vmm.s, mask / T_m, load(ld).s, load().s);
-                    } else {
-                        dot_product(vmm, load(), bcst(bd));
-                    }
-                }
-            }
-        }
-    } else {
-        auto x_addr = reg_aux_B;
-        int base_offset = 0;
-
-        for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {
-            for (int ld = 0; ld < ld_block2; ld++) {       
-                const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE; 
-                if (brg.dt_b == data_type::f16) {
-                    assert(!"unsupported\n");
-                } else if (brg.dt_b == data_type::bf16
-                        && brg.isa_impl == sve_256) {
-                    assert(!"unsupported\n");
-                } else {
-                    const int offset = B_offset(ld, rd);
-                    if ((unsigned)(offset - base_offset) > cpu_sveLen * 7) {
-                        add_imm(reg_tmp_, reg_aux_B, offset, X_TMP_0);
-                        base_offset = offset;
-                        x_addr = reg_tmp_;
-                    }
-                    LD_MUL_VL(ld1w, load(ld).s, mask, x_addr,
-                    offset - base_offset, 4);
-                }
-            }
-
-
-            bool have_to_load_bytes
-                    = maybe_load_bytes && (rd == rd_loop - brg.rd_step);
-
-            auto rows_by_load_bytes = have_to_load_bytes ? rows_for_rd_tail : 0;
-            for (int bd = bd_b; bd < bd_e; bd++) {
-                if (!is_emdbd) {
-                    const auto bd_by_load_bytes
-                            = (bd >= bd_e - rows_by_load_bytes
-                                    || brg.brgattr.wary_A_k_tail_read);
-                    load_values(bcst(), A_offset(bd, rd),
-                            (have_to_load_bytes && bd_by_load_bytes), is_rd_tail, brg.dt_a);
-                }
-                //The current implementaion of prefetch is not giving any gain in performance but is rather introducing some latency. Therefore it is removed util a new useful implementation is deviced.
-                const auto mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
-                for (int ld = 0; ld < ld_block2; ld++) {
-                    auto zmm = accm(ld_block2, bd, ld);
-                    if (is_emdbd) {
-                        if (A_offset(bd, rd) < (1 << 6)) {
-                            ld1w(z_tmp_1().s, mask / T_z,
-                                    ptr(reg_aux_A, A_offset(bd, rd)));
-                        } else {
-                            add_imm(X_DEFAULT_ADDR, reg_aux_A, A_offset(bd, rd),
-                                    X_TMP_0);
-                            ld1w(z_tmp_1().s, mask / T_z,
-                                    ptr(X_DEFAULT_ADDR));
-                        }
-                        fmla(zmm.s, mask / T_m, load(ld).s, z_tmp_1().s);
-                    } else {
-                        dot_product(zmm, load(ld), bcst());
-                    }
-                }
-            }
-        }
-    }
-}
-
 void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
         int ld_block2, int ldb_loop_length, bool is_reg_tail, bool is_ld_tail,
         bool check_top_vpad, bool check_bottom_vpad, int rows_for_rd_tail,
@@ -1805,13 +1641,6 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
                 const bool is_rd_tail = false;
                 gemm_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
                         is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail, brg.LDB == 1);
-                // if (brg.LDB == 1) {
-                //     gemv_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
-                //         is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail);
-                // } else {
-                //     gemm_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
-                //         is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail, false);
-                // }
 
                 if (brg.LDB == 1) {
                     add_imm(reg_aux_A, reg_aux_A, cpu_sveLen, X_TMP_0);
@@ -1831,13 +1660,6 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
 
             gemm_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
                     is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail, brg.LDB == 1);
-            // if (brg.LDB == 1) {
-            //     gemv_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
-            //         is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail);
-            // } else {
-            //     gemm_microkernel_sve512(bd_block2, is_bdb_tail, ld_block2,
-            //         is_rd_tail, is_ld_tail, vpad, rows_for_rd_tail, false);
-            // }
         }
     };
     if (is_ldb_loop_) { mov_imm(reg_ldb_loop, ldb_loop_length); }
