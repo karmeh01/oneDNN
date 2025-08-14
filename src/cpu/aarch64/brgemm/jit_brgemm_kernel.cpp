@@ -1542,8 +1542,8 @@ void jit_brgemm_kernel_t::gemm_microkernel_sve512(int bd_block2,
         for (int rd = 0; rd < rd_loop; rd += brg.rd_step) {
             for (int ld = 0; ld < ld_block2; ld++) {
                 auto mask = is_ld_tail ? ld_tail_mask : P_ALL_ONE;
-                if (is_gemv && is_rd_tail)
-                    mask = gemv_tail_mask;
+                if (is_gemv)
+                    mask = is_rd_tail ? gemv_tail_mask : P_ALL_ONE;
                 if (brg.dt_b == data_type::f16) {
                     assert(!"unsupported\n");
                 } else if (brg.dt_b == data_type::bf16
