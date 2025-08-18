@@ -2014,9 +2014,10 @@ void jit_brgemm_kernel_t::generate() {
 
     set_preg(ld_tail_mask.s, brg.ldb_tail, X_TMP_0, X_TMP_1);
     if (brg.is_int8 && !brg.has_int8_vnni) { assert(!"unsupported\n"); }
-    // TODO: combine into an if statement - if(brg.LDB == 1) 
-    const int k_tail = brg.LDA % simd_w_;
-    set_preg(gemv_tail_mask.s, k_tail, X_TMP_0, X_TMP_1);
+    if(brg.LDB == 1) {
+        const int k_tail = brg.LDA % simd_w_;
+        set_preg(gemv_tail_mask.s, k_tail, X_TMP_0, X_TMP_1);
+    }
 
     read_params();
 
