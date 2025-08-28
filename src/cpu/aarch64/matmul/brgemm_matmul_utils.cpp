@@ -88,6 +88,10 @@ int get_default_n_block(
                     if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
                             && bgmmc.M > 512)
                         return 64;
+                    // else if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
+                    //         && bgmmc.M <= 512) {
+                    //     return 256;
+                    // } 
                     else
                         return 32;
                 }
@@ -604,7 +608,7 @@ float compute_blocking_heuristic_sve_256(brgemm_matmul_conf_t &bgmmc,
     const int n_chunks_start = nstl::min(max_n_chunks, n_chunks);
 
     //It is found that for M<512 k_blk of 128 works better than 1024 for most of the shapes.
-    int default_k_blk = (matmul.M >= 512) ? 1024 : 128;
+    int default_k_blk = (matmul.M >= 512) ? 1024 : 128;         // Sets K to 128 - change
     int k_blk = nstl::min(matmul.K, default_k_blk);
     int start_nthr_k = 1;
 
@@ -664,7 +668,7 @@ float compute_blocking_heuristic_sve_256(brgemm_matmul_conf_t &bgmmc,
 status_t compute_blocking_heuristic(brgemm_matmul_conf_t &bgmmc,
         const brgemm_matmul_conf_utils_t &bm_conf_utils) {
 
-    bgmmc.N_blk = nstl::min(static_cast<dim_t>(bgmmc.wei_n_blk), bgmmc.N);
+    bgmmc.N_blk = nstl::min(static_cast<dim_t>(bgmmc.wei_n_blk), bgmmc.N); // This sets N to 32 - change
 
     bgmmc.M_chunk_size = bgmmc.N_chunk_size = 1;
 
@@ -866,7 +870,7 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
 
     VCHECK_BG(attr.set_default_formats(&dst_md), VERBOSE_UNSUPPORTED_TAG);
 
-    bgmmc.wei_n_blk = get_default_n_block(bgmmc.wei_tag, bgmmc);
+    bgmmc.wei_n_blk = 256;//get_default_n_block(bgmmc.wei_tag, bgmmc); //-- change wei_n_blk to 256
 
     bgmmc.blocked_B = bm_conf_utils.get_blocked_B();
     bgmmc.use_buffer_b = bm_conf_utils.use_buffer_b();
