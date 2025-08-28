@@ -88,10 +88,10 @@ int get_default_n_block(
                     if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
                             && bgmmc.M > 512)
                         return 64;
-                    // else if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
-                    //         && bgmmc.M <= 512) {
-                    //     return 256;
-                    // } 
+                    else if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
+                            && bgmmc.M <= 512) {
+                        return 256;
+                    } 
                     else
                         return 32;
                 }
@@ -870,7 +870,7 @@ status_t init_brgemm_matmul_conf(cpu_isa_t isa, brgemm_matmul_conf_t &bgmmc,
 
     VCHECK_BG(attr.set_default_formats(&dst_md), VERBOSE_UNSUPPORTED_TAG);
 
-    bgmmc.wei_n_blk = 256;//get_default_n_block(bgmmc.wei_tag, bgmmc); //-- change wei_n_blk to 256
+    bgmmc.wei_n_blk = get_default_n_block(bgmmc.wei_tag, bgmmc); //-- change wei_n_blk to 256
 
     bgmmc.blocked_B = bm_conf_utils.get_blocked_B();
     bgmmc.use_buffer_b = bm_conf_utils.use_buffer_b();
