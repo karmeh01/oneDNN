@@ -88,10 +88,6 @@ int get_default_n_block(
                     if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
                             && bgmmc.M > 512)
                         return 64;
-                    else if (bgmmc.N / 64 >= bgmmc.nthr && bgmmc.K > 512
-                            && bgmmc.M <= 512) {
-                        return 256;
-                    } 
                     else
                         return 32;
                 }
@@ -609,6 +605,7 @@ float compute_blocking_heuristic_sve_256(brgemm_matmul_conf_t &bgmmc,
 
     //It is found that for M<512 k_blk of 128 works better than 1024 for most of the shapes.
     int default_k_blk = (matmul.M >= 512) ? 1024 : 128;         // Sets K to 128 - change
+//     int default_k_blk = (matmul.M >= 512 || matmul.M == 1) ? 1024 : 128;         // Sets K to 128 - change
     int k_blk = nstl::min(matmul.K, default_k_blk);
     int start_nthr_k = 1;
 
