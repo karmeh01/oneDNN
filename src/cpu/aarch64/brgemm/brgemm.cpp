@@ -55,7 +55,7 @@ void brgemm_kernel_execute(const brgemm_kernel_t *brg_kernel, int bs,
     brgemm_p.do_apply_comp = 0;
     brgemm_p.skip_accm = 0;
     brgemm_p.BS = bs;
-
+    // printf("§");
     assert(brg_kernel);
 
     (*brg_kernel)(&brgemm_p);

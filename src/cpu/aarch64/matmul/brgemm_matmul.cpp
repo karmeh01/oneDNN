@@ -27,7 +27,11 @@
 #include "cpu/scale_utils.hpp"
 
 #include "cpu/aarch64/injectors/jit_uni_binary_injector.hpp"
+
 #include "cpu/aarch64/matmul/brgemm_matmul.hpp"
+
+#include <cstdint>
+#include <cstdio>
 
 namespace dnnl {
 namespace impl {
@@ -74,6 +78,16 @@ int get_brg_batchsize(
             : is_bs_tail ? bgmmc.brgemm_batch_tail_size
                          : bgmmc.brgemm_batch_size;
     return bs;
+}
+
+// Debug-only helper to verify column-major layout for float B
+static inline void assert_column_major(const float* B, int K, int N) {
+    uintptr_t base = reinterpret_cast<uintptr_t>(&B[0 * (size_t)K + 0]);
+    uintptr_t step_row = reinterpret_cast<uintptr_t>(&B[1 * (size_t)K + 0]) - base; // B(1,0) - B(0,0)
+    uintptr_t step_col = reinterpret_cast<uintptr_t>(&B[0 * (size_t)K + 1]) - base; // B(0,1) - B(0,0)
+    std::printf("[brgemm_matmul] B strides: step_row=%zu step_col=%zu (bytes)\n",
+                (size_t)step_row, (size_t)step_col);
+    // Expect column-major: step_row == sizeof(float), step_col == K*sizeof(float)
 }
 
 } // anonymous namespace
@@ -371,6 +385,13 @@ void brgemm_matmul_t<isa>::compute_kernel(
     const bool need_copy_d = brgmm_ctx.copy_d_required(m_blk_idx);
     const int n = n_blk_idx * bgmmc.N_blk;
     const int k_blk_idx = k_chunk_idx * bgmmc.brgemm_batch_size;
+
+    // Layout sanity check: run once (thread 0, first blocks) for f32, non-blocked B
+    if (ithr == 0 && b_idx == 0 && m_blk_idx == 0 && n_blk_idx == 0 && k_chunk_idx == 0 &&
+        bgmmc.wei_dt == data_type::f32 && !bgmmc.blocked_B) {
+        const float* B0 = reinterpret_cast<const float*>(brgmm_ctx.get_data_B_ptr(/*b*/0, /*k*/0, /*n*/0));
+        assert_column_major(B0, (int)bgmmc.K, (int)bgmmc.N);
+    }
 
     const dim_t M = brgmm_ctx.get_M();
     const int m_ker_idx = brgmm_ctx.get_M_kernel_idx(m_blk_idx);

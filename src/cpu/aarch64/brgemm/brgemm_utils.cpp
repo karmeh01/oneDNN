@@ -199,6 +199,7 @@ status_t brgemm_blocking(brgemm_t *brg) {
     brg->ldb = brg->load_dim / brg->ld_block;
     brg->ldb_tail = brg->load_dim % brg->ld_block;
 
+    // int adj_ld_block2 = brg->bcast_dim == 1 ? calculate_ldb_params(brg, 8) : calculate_ldb_params(brg, 4);
     int adj_ld_block2 = calculate_ldb_params(brg, 4);
     int max_bcast_block = calculate_max_bcast_block(brg, adj_ld_block2);
 
