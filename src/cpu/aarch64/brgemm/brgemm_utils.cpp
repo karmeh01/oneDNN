@@ -305,7 +305,7 @@ status_t init_brgemm_conf(brgemm_t *brg, cpu_isa_t isa,
 
     init_common_conf(brg, type, alpha, beta, strides);
 
-    brg->layout = layout;
+    brg->layout =  brgemm_row_major;//layout;
 
     brg->dt_a = brg->is_row_major() ? dt_a : dt_b;
     brg->dt_b = brg->is_row_major() ? dt_b : dt_a;
@@ -336,6 +336,8 @@ status_t init_brgemm_conf(brgemm_t *brg, cpu_isa_t isa,
                                      : static_cast<int>(LDA);
     brg->LDC = static_cast<int>(LDC);
     brg->LDD = static_cast<int>(LDC);
+
+    brg->layout = layout;
 
     brg->bcast_dim
             = (brg->is_row_major()) ? static_cast<int>(M) : static_cast<int>(N);

@@ -800,7 +800,7 @@ void jit_brgemm_kernel_t::zero_accumulators(int bd_block2, bool is_bdb_tail,
         auto zmm = accm(ld_block2, bd, ld);
         // This part is moved here from apply_alpha_beta function so that fadd instruction can be avoided.
         // This is also required only when K is blocked.
-        if (need_to_apply_beta && brg.LDB > 1) {
+        if (need_to_apply_beta && brg.LDB > 1 && !(brg.load_dim == 1 && brg.layout == brgemm_col_major)) {
             const bool is_tail = is_ld_tail && ld + 1 == ld_block2;
             const auto k_mask = is_tail ? ld_tail_mask : ld_full_mask;
 
@@ -1203,13 +1203,15 @@ void jit_brgemm_kernel_t::store_accumulators_without_post_ops(
     int base_offset = 0;
 
     auto scalar_reg = SReg(0);
-    bool is_gemv = brg.LDB == 1;
+    bool is_1xK_gemv = brg.load_dim == 1 && brg.layout == brgemm_col_major;
+    bool is_gemv = brg.LDB == 1 || is_1xK_gemv;
 
     for (int bd = 0; bd < bd_block; bd++) {
         for (int ld = 0; ld < ld_block2; ld++) {
             auto zmm = accm(ld_block2, bd, ld);
             const auto mask = is_ld_tail ? ld_tail_mask : P_ALL_ONE;
-            const int offset = C_offset(bd, ld);
+            int offset = C_offset(bd, ld);
+            if (is_1xK_gemv) offset = (ld + bd * ld_block2) * brg.typesize_C;
 
             if ((unsigned)(offset - base_offset) > cpu_sveLen * 7) {
                 add_imm(reg_tmp_, reg_aux_C, offset, X_TMP_0);
@@ -1259,7 +1261,7 @@ void jit_brgemm_kernel_t::store_accumulators(int bd_block2, bool is_bdb_tail,
         LDR_IMM(reg_do_post_ops, X_SP, reg_do_post_ops_offs_);
         cmp_imm(reg_do_post_ops, 0, X_TMP_0);
         b(EQ, label_store_without_post_ops);
-        if (brg.LDB == 1) {
+        if (brg.LDB == 1 || (brg.load_dim == 1 && brg.layout == brgemm_col_major)) {
             sum_into_one_lane(bd_block, ld_block2, is_ld_tail);
         }
         store_accumulators_apply_post_ops(bd_block, ld_block2, 0, is_ld_tail);
@@ -1482,7 +1484,7 @@ void jit_brgemm_kernel_t::gemm_microkernel(int bd_block2, bool is_bdb_tail,
     if (!is_valid_bd) return;
 
     bool is_emdbd = brg.embd_bcst;
-    bool is_gemv = brg.LDB == 1;
+    bool is_gemv = brg.LDB == 1 || (brg.load_dim == 1 && brg.layout == brgemm_col_major);
 
     int rd_loop = 0, rd_tail_size = 0;
     if (is_gemv) {
@@ -1692,7 +1694,7 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
         int rdb_val = brg.rdb;
         int rdb_tail = brg.rdb_tail;
         MAYBE_UNUSED(rdb_tail);
-        if (brg.LDB == 1) {
+        if (brg.LDB == 1 || (brg.load_dim == 1 && brg.layout == brgemm_col_major)) {
             rdb_val = (brg.rd_block * brg.rdb + brg.rdb_tail)
                     / (cpu_sveLen / sizeof(float));
             rdb_tail = (brg.rd_block * brg.rdb + brg.rdb_tail)
@@ -1708,7 +1710,7 @@ void jit_brgemm_kernel_t::ldb_loop(int bd_block2, bool is_bdb_tail,
                 gemm_microkernel(bd_block2, is_bdb_tail, ld_block2, is_rd_tail,
                         is_ld_tail, vpad, rows_for_rd_tail);
 
-                if (brg.LDB == 1) {
+                if (brg.LDB == 1 || (brg.load_dim == 1 && brg.layout == brgemm_col_major)) {
                     add_imm(reg_aux_A, reg_aux_A, cpu_sveLen, X_TMP_0);
                     add_imm(reg_aux_B, reg_aux_B, cpu_sveLen, X_TMP_0);
                 } else {
@@ -1891,9 +1893,16 @@ void jit_brgemm_kernel_t::bdb_loop() {
         do_ldb_loop(bd_block2, is_bdb_tail, check_top_vpad, check_bottom_vpad,
                 rows_for_rd_tail, skip_accumulation);
 
-        add_imm(reg_C, reg_C, bdb_C_offset(bd_block2), X_TMP_0);
-        add_imm(reg_D, reg_D, bdb_D_offset(bd_block2), X_TMP_0);
-        add_imm(reg_a_offset, reg_a_offset, bdb_A_offset(bd_block2), X_TMP_0);
+        bool is_1xK_gemv = brg.load_dim == 1 && brg.layout == brgemm_col_major;
+        if (is_1xK_gemv) {
+            add_imm(reg_C, reg_C, brg.bd_block * brg.typesize_C, X_TMP_0);
+            add_imm(reg_D, reg_D, brg.bd_block * brg.typesize_D, X_TMP_0);
+            add_imm(reg_a_offset, reg_a_offset, bdb_A_offset(bd_block2), X_TMP_0);
+        } else {
+            add_imm(reg_C, reg_C, bdb_C_offset(bd_block2), X_TMP_0);
+            add_imm(reg_D, reg_D, bdb_D_offset(bd_block2), X_TMP_0);
+            add_imm(reg_a_offset, reg_a_offset, bdb_A_offset(bd_block2), X_TMP_0);
+        }
 
         advance_bd_block2_post_op_regs(bd_block2);
     };
@@ -2080,7 +2089,7 @@ void jit_brgemm_kernel_t::generate() {
 
     set_preg(ld_tail_mask.s, brg.ldb_tail, X_TMP_0, X_TMP_1);
     if (brg.is_int8 && !brg.has_int8_vnni) { assert(!"unsupported\n"); }
-    if (brg.LDB == 1) {
+    if (brg.LDB == 1 || (brg.load_dim == 1 && brg.layout == brgemm_col_major)) {
         const int k_tail = brg.LDA % simd_w_;
         set_preg(gemv_tail_mask.s, k_tail, X_TMP_0, X_TMP_1);
     }
